@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>魔幻粒子</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: system-ui, sans-serif; }
+        
+        #startScreen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            background: radial-gradient(ellipse at center, #1a1a2e 0%, #000 100%);
+            z-index: 10; transition: opacity 0.5s;
+        }
+        #startScreen.hidden { opacity: 0; pointer-events: none; }
+        
+        h1 { color: #fff; font-size: 48px; font-weight: 300; letter-spacing: 8px; margin-bottom: 60px; animation: pulse 2s ease-in-out infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 0.8; } 50% { opacity: 1; } }
+        
+        #startBtn {
+            padding: 20px 60px; font-size: 18px; color: #fff; background: transparent;
+            border: 2px solid rgba(255,255,255,0.3); border-radius: 50px; cursor: pointer;
+            letter-spacing: 4px; transition: all 0.3s;
+        }
+        #startBtn:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.8); transform: scale(1.05); }
+        
+        #gameScreen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; transition: opacity 0.5s; pointer-events: none; }
+        #gameScreen.active { opacity: 1; pointer-events: auto; }
+        
+        #exitBtn {
+            position: fixed; top: 20px; right: 20px; z-index: 100; width: 44px; height: 44px;
+            border-radius: 50%; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3);
+            color: #fff; font-size: 20px; cursor: pointer; display: flex; justify-content: center; align-items: center;
+        }
+        #exitBtn:hover { background: rgba(255,255,255,0.2); }
+        
+        canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+    </style>
+</head>
+<body>
+    <div id="startScreen">
+        <h1>魔幻粒子</h1>
+        <button id="startBtn">开始体验</button>
+    </div>
+    
+    <div id="gameScreen">
+        <button id="exitBtn">×</button>
+        <canvas id="c"></canvas>
+    </div>
+    
+    <script>
+        const startScreen = document.getElementById('startScreen');
+        const gameScreen = document.getElementById('gameScreen');
+        
+        document.getElementById('startBtn').onclick = () => {
+            startScreen.classList.add('hidden');
+            gameScreen.classList.add('active');
+            startGame();
+        };
+        
+        document.getElementById('exitBtn').onclick = () => {
+            gameScreen.classList.remove('active');
+            startScreen.classList.remove('hidden');
+        };
+        
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
+        const dpr = window.devicePixelRatio || 1;
+        
+        let W, H;
+        function resize() {
+            W = window.innerWidth * dpr;
+            H = window.innerHeight * dpr;
+            canvas.width = W; canvas.height = H;
+        }
+        
+        const N = 16384;
+        const L = 150;
+        
+        const x = new Float32Array(N);
+        const y = new Float32Array(N);
+        const vx = new Float32Array(N);
+        const vy = new Float32Array(N);
+        const homeX = new Float32Array(N);
+        const homeY = new Float32Array(N);
+        const phase = new Float32Array(N);
+        const color = new Uint32Array(N);
+        
+        const trailX = new Float32Array(N * L);
+        const trailY = new Float32Array(N * L);
+        const trailPos = new Uint16Array(N);
+        
+        const fingers = [];
+        
+        function startGame() {
+            resize();
+            window.onresize = resize;
+            
+            for (let i = 0; i < N; i++) {
+                x[i] = Math.random() * W;
+                y[i] = Math.random() * H;
+                homeX[i] = x[i];
+                homeY[i] = y[i];
+                phase[i] = Math.random() * 6.28;
+                color[i] = 0xFF000000 | (Math.random() * 0xFFFFFF);
+                trailPos[i] = 0;
+                for (let j = 0; j < L; j++) {
+                    trailX[i * L + j] = x[i];
+                    trailY[i * L + j] = y[i];
+                }
+            }
+            
+            canvas.ontouchstart = e => {
+                e.preventDefault();
+                fingers.length = 0;
+                for (let t of e.touches) fingers.push({x: t.clientX * dpr, y: t.clientY * dpr});
+            };
+            
+            canvas.ontouchmove = e => {
+                e.preventDefault();
+                fingers.length = 0;
+                for (let t of e.touches) fingers.push({x: t.clientX * dpr, y: t.clientY * dpr});
+            };
+            
+            canvas.ontouchend = e => {
+                e.preventDefault();
+                for (let t of e.changedTouches) explode(t.clientX * dpr, t.clientY * dpr);
+                fingers.length = 0;
+                for (let t of e.touches) fingers.push({x: t.clientX * dpr, y: t.clientY * dpr});
+            };
+            
+            let mouseDown = false;
+            canvas.onmousedown = e => { mouseDown = true; fingers[0] = {x: e.clientX * dpr, y: e.clientY * dpr}; };
+            canvas.onmousemove = e => { if (mouseDown) fingers[0] = {x: e.clientX * dpr, y: e.clientY * dpr}; };
+            canvas.onmouseup = e => { if (mouseDown) { explode(e.clientX * dpr, e.clientY * dpr); mouseDown = false; fingers.length = 0; } };
+            canvas.onmouseleave = () => { if (mouseDown) { mouseDown = false; fingers.length = 0; } };
+            
+            loop();
+        }
+        
+        function explode(ex, ey) {
+            for (let i = 0; i < N; i++) {
+                let dx = x[i] - ex;
+                let dy = y[i] - ey;
+                let d = Math.sqrt(dx * dx + dy * dy);
+                if (d < 400 && d > 0.1) {
+                    let speed = 16 * (1 - d / 400);
+                    vx[i] += (dx / d) * speed;
+                    vy[i] += (dy / d) * speed;
+                }
+            }
+        }
+        
+        function loop() {
+            if (!gameScreen.classList.contains('active')) return;
+            
+            if (fingers.length > 0) {
+                for (let i = 0; i < N; i++) {
+                    let minD = 999999;
+                    let tx = 0, ty = 0;
+                    for (let f of fingers) {
+                        let dx = f.x - x[i];
+                        let dy = f.y - y[i];
+                        let d = dx * dx + dy * dy;
+                        if (d < minD) { minD = d; tx = f.x; ty = f.y; }
+                    }
+                    let d = Math.sqrt(minD) + 1;
+                    vx[i] += (tx - x[i]) / d * 0.25;
+                    vy[i] += (ty - y[i]) / d * 0.25;
+                    vx[i] *= 0.9; vy[i] *= 0.9;
+                    x[i] += vx[i]; y[i] += vy[i];
+                    if (x[i] < 0) x[i] = W; if (x[i] > W) x[i] = 0;
+                    if (y[i] < 0) y[i] = H; if (y[i] > H) y[i] = 0;
+                    let p = trailPos[i];
+                    trailX[i * L + p] = x[i];
+                    trailY[i * L + p] = y[i];
+                    trailPos[i] = (p + 1) % L;
+                }
+            } else {
+                for (let i = 0; i < N; i++) {
+                    phase[i] += 0.02;
+                    vx[i] += (homeX[i] - x[i]) * 0.001 + Math.cos(phase[i]) * 0.01;
+                    vy[i] += (homeY[i] - y[i]) * 0.001 + Math.sin(phase[i]) * 0.01;
+                    vx[i] *= 0.98; vy[i] *= 0.98;
+                    x[i] += vx[i]; y[i] += vy[i];
+                    if (x[i] < 0) x[i] = W; if (x[i] > W) x[i] = 0;
+                    if (y[i] < 0) y[i] = H; if (y[i] > H) y[i] = 0;
+                    let p = trailPos[i];
+                    trailX[i * L + p] = x[i];
+                    trailY[i * L + p] = y[i];
+                    trailPos[i] = (p + 1) % L;
+                }
+            }
+            
+            let img = ctx.createImageData(W, H);
+            let pix = new Uint32Array(img.data.buffer);
+            pix.fill(0xFF000000);
+            
+            for (let i = 0; i < N; i++) {
+                let c = color[i];
+                let pos = trailPos[i];
+                for (let j = 0; j < L; j++) {
+                    let idx = (pos + j) % L;
+                    let tx = trailX[i * L + idx] | 0;
+                    let ty = trailY[i * L + idx] | 0;
+                    if (tx >= 0 && tx < W && ty >= 0 && ty < H) {
+                        let a = (0.05 + j / L * 0.95) * 255;
+                        let r = ((c & 0xFF) * a / 255) | 0;
+                        let g = (((c >> 8) & 0xFF) * a / 255) | 0;
+                        let b = (((c >> 16) & 0xFF) * a / 255) | 0;
+                        pix[ty * W + tx] = (255 << 24) | (b << 16) | (g << 8) | r;
+                    }
+                }
+                let cx = x[i] | 0;
+                let cy = y[i] | 0;
+                if (cx >= 0 && cx < W && cy >= 0 && cy < H) pix[cy * W + cx] = c;
+            }
+            
+            ctx.putImageData(img, 0, 0);
+            requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>
